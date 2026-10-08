@@ -55,7 +55,7 @@ The default output file is:
 learned_raw.json
 ```
 
-During capture, aim the remote control at Irdroid and press and hold one button. Do not release and press the button repeatedly.
+During capture, aim the remote control at Irdroid and press one button once. The receiver uses record mode `m` and stops after the first complete RAW frame by detecting its long lead-out timing. It does not wait for serial inactivity, because a held remote can repeat frames continuously.
 
 Specify the COM port when auto-detection is unavailable or multiple devices are connected:
 
@@ -95,10 +95,16 @@ Specify a COM port:
 python -u irdroid_transmit.py command_1.json --port COM4
 ```
 
-Repeat the complete transmission:
+By default, three copies of the captured frame are concatenated into one Irdroid transmission. This is required by commands that must be repeated as a frame sequence. Change the number when needed:
 
 ```bash
-python -u irdroid_transmit.py command_1.json --repeat 3
+python -u irdroid_transmit.py command_1.json --frames 3
+```
+
+Repeat the complete transmission transaction separately only when required:
+
+```bash
+python -u irdroid_transmit.py command_1.json --frames 3 --repeat 2
 ```
 
 Linux example:
@@ -134,3 +140,11 @@ The transmitter uses the `raw_hex` field. No CSV or Pronto conversion is perform
 ## License
 
 MIT License
+
+### Capture does not stop
+
+The receiver stops at the first long lead-out timing value after a minimum number of timing words. A verified capture contained a final lead-out near `0x04B3` to `0x04B5`, producing one frame of 52 bytes. Continuous remote repeats after that point are intentionally discarded.
+
+### Transmission completes but the device does not respond
+
+A successful serial transmission only confirms that Irdroid accepted the byte stream. Some commands require the same captured frame several times in one transmission transaction. The default is `--frames 3`. This differs from `--repeat`, which starts separate transmission transactions.

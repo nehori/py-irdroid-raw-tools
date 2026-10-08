@@ -77,7 +77,7 @@ def load_capture(path):
         raise IrdroidError("raw_hex contains invalid hexadecimal data.") from exc
 
 
-def prepare_replay(raw):
+def prepare_replay(raw, frames):
     marker = raw.find(END_MARKER)
     if 0 <= marker <= 8:
         raw = raw[marker + 2:]
@@ -90,7 +90,7 @@ def prepare_replay(raw):
     if len(raw) % 2:
         raise IrdroidError(f"Payload has an odd byte length: {len(raw)}.")
 
-    return raw + END_MARKER
+    return raw * frames + END_MARKER
 
 
 def initialize_transmit_mode(ser):
@@ -165,10 +165,13 @@ def main():
         help=f"Default: {DEFAULT_CAPTURE}",
     )
     parser.add_argument("--port", help="COM port. Auto-detected by default.")
-    parser.add_argument("--repeat", type=int, default=1, help="Default: 1")
+    parser.add_argument("--frames", type=int, default=3, help="Number of IR frames in one transmission. Default: 3")
+    parser.add_argument("--repeat", type=int, default=1, help="Number of complete transmission transactions. Default: 1")
     parser.add_argument("--timeout", type=float, default=2.0)
     args = parser.parse_args()
 
+    if args.frames < 1:
+        raise SystemExit("--frames must be 1 or greater.")
     if args.repeat < 1:
         raise SystemExit("--repeat must be 1 or greater.")
 
@@ -177,7 +180,7 @@ def main():
 
     try:
         raw = load_capture(capture_path)
-        payload = prepare_replay(raw)
+        payload = prepare_replay(raw, args.frames)
         with serial.Serial(
             port=port,
             baudrate=BAUDRATE,
@@ -188,6 +191,8 @@ def main():
             version = initialize_transmit_mode(ser)
             print(f"Firmware: {version}", flush=True)
             print(f"Capture: {capture_path.resolve()}", flush=True)
+            print(f"Frame bytes: {len(raw)}", flush=True)
+            print(f"Frames per transmission: {args.frames}", flush=True)
             print(f"Payload: {len(payload)} byte(s)", flush=True)
             for count in range(1, args.repeat + 1):
                 transmit_once(ser, payload)

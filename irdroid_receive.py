@@ -16,7 +16,7 @@ DEFAULT_OUTPUT = "learned_raw.json"
 IRDROID_PID = 0xFD08
 RESET = b"\x00\x00\x00\x00\x00"
 VERSION = b"v"
-SAMPLE_MODE = b"s"
+RECORD_MODE = b"m"
 END_MARKER = b"\xff\xff"
 
 
@@ -76,9 +76,9 @@ def initialize_receive_mode(ser):
     if not version_text.startswith("V") or not version_text[1:].isdigit():
         raise IrdroidError(f"Invalid version response: {version!r}")
 
-    ser.write(SAMPLE_MODE)
+    ser.write(RECORD_MODE)
     ser.flush()
-    mode = read_exact(ser, 3, "sample mode")
+    mode = read_exact(ser, 3, "record mode")
     if mode != b"S01":
         raise IrdroidError(f"Expected S01, got {mode!r}")
 
@@ -86,36 +86,59 @@ def initialize_receive_mode(ser):
     return version_text
 
 
-def capture_raw(ser, start_timeout, idle_timeout, max_seconds):
-    print("Aim the remote at Irdroid and press and hold one button.", flush=True)
-    print("Do not release and press the button repeatedly.", flush=True)
+def capture_raw(ser, start_timeout, max_seconds, max_bytes):
+    print("Point the remote at Irdroid and press one button once.", flush=True)
+    print("Capturing one RAW frame...", flush=True)
 
     captured = bytearray()
     start_deadline = time.monotonic() + start_timeout
     capture_deadline = time.monotonic() + max_seconds
-    last_data_time = None
+    minimum_timing_words = 8
+    lead_out_threshold = 0x0100
 
     while time.monotonic() < capture_deadline:
         waiting = ser.in_waiting
         chunk = ser.read(waiting if waiting > 0 else 1)
-        if chunk:
-            captured.extend(chunk)
-            last_data_time = time.monotonic()
-            print(f"Captured: {len(captured)} byte(s)", end="\r", flush=True)
+        if not chunk:
+            if not captured and time.monotonic() >= start_deadline:
+                raise IrdroidError("No infrared signal was received before timeout.")
             continue
 
-        now = time.monotonic()
-        if not captured:
-            if now >= start_deadline:
-                raise IrdroidError("No infrared signal was received before timeout.")
-        elif last_data_time is not None and now - last_data_time >= idle_timeout:
-            break
+        captured.extend(chunk)
+        print(
+            f"RX fragment: {chunk.hex(' ')} "
+            f"({len(chunk)} byte(s)), total={len(captured)}",
+            flush=True,
+        )
 
-    print("", flush=True)
-    if len(captured) < 12:
-        raise IrdroidError(f"Captured data is too short: {len(captured)} byte(s).")
+        if len(captured) > max_bytes:
+            raise IrdroidError(
+                f"Capture exceeded the safety limit of {max_bytes} byte(s)."
+            )
 
-    return bytes(captured)
+        # Record mode returns 16-bit big-endian timing values continuously.
+        # A complete frame ends at the first long lead-out gap. In the verified
+        # capture this is approximately 0x04B3 to 0x04B5. Stop there instead of
+        # waiting for serial idle, because a held remote immediately repeats.
+        even_length = len(captured) - (len(captured) % 2)
+        words = [
+            int.from_bytes(captured[i:i + 2], "big")
+            for i in range(0, even_length, 2)
+        ]
+        for index, value in enumerate(words):
+            if index >= minimum_timing_words and value >= lead_out_threshold:
+                frame_end = (index + 1) * 2
+                frame = bytes(captured[:frame_end])
+                print(
+                    f"Lead-out detected: 0x{value:04X}; "
+                    f"one frame={len(frame)} byte(s)",
+                    flush=True,
+                )
+                return frame
+
+    raise IrdroidError(
+        f"No complete frame lead-out was detected within {max_seconds} second(s)."
+    )
 
 
 def main():
@@ -129,8 +152,8 @@ def main():
     )
     parser.add_argument("--timeout", type=float, default=2.0)
     parser.add_argument("--start-timeout", type=float, default=15.0)
-    parser.add_argument("--idle-timeout", type=float, default=0.5)
     parser.add_argument("--max-seconds", type=float, default=20.0)
+    parser.add_argument("--max-bytes", type=int, default=65536)
     args = parser.parse_args()
 
     port = args.port or detect_port()
@@ -149,8 +172,8 @@ def main():
             raw = capture_raw(
                 ser,
                 args.start_timeout,
-                args.idle_timeout,
                 args.max_seconds,
+                args.max_bytes,
             )
             ser.write(RESET)
             ser.flush()
