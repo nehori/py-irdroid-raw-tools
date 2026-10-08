@@ -1,150 +1,86 @@
-# Irdroid RAW IR Learner and Transmitter
+# py-irdroid-raw-tools
 
-Python scripts for capturing an infrared signal with Irdroid and replaying the saved RAW signal.
+Standalone Python samples for receiving an IR command with Irdroid, saving it as Pronto Hex, and transmitting it again.
 
-This repository uses the same simple workflow for receiving and transmitting:
+The scripts require only `pyserial`. They do not require `irdroid.py` or a device-specific DLL.
 
-1. Capture one remote-control command.
-2. Save the RAW signal to `learned_raw.json`.
-3. Replay `learned_raw.json`, or specify another capture file.
+## Files
 
-## Features
+```text
+irdroid_receive_pronto.py
+irdroid_transmit_pronto.py
+README.md
+```
 
-- Captures long RAW infrared signals.
-- Saves the complete capture as hexadecimal timing data in JSON.
-- Replays the saved RAW signal without Pronto conversion.
-- Supports multi-line and long commands through a file-based workflow.
-- Automatically detects one connected Irdroid device by USB PID.
-- Allows an explicit COM port when multiple devices are connected.
-- Works without a device-specific DLL.
-
-## Requirements
-
-- Python 3.9 or later
-- Irdroid USB Infrared Transceiver
-- `pyserial`
-
-Install the Python dependency:
+## Install
 
 ```bash
 python -m pip install pyserial
 ```
 
-The Irdroid device must appear as a serial port such as `COM4` on Windows or `/dev/ttyACM0` on Linux.
+## Receive
 
-## Files
+```bash
+python -u irdroid_receive_pronto.py
+```
+
+The default output is:
 
 ```text
-irdroid-raw-tools/
-├── README.md
-├── irdroid_receive.py
-└── irdroid_transmit.py
+learned_pronto.txt
 ```
 
-## Receive and Save a Signal
-
-Run without a port argument to auto-detect one connected Irdroid device:
+Examples:
 
 ```bash
-python -u irdroid_receive.py
+python -u irdroid_receive_pronto.py --port COM4
+python -u irdroid_receive_pronto.py --carrier-hz 38000
+python -u irdroid_receive_pronto.py --divisor 0067
+python -u irdroid_receive_pronto.py --output command_1.txt
 ```
 
-The default output file is:
+The receive stream contains pulse and space durations but does not directly provide the received carrier frequency. The default carrier assumption is 40000 Hz. Specify another carrier frequency or Pronto divisor when required.
 
-```text
-learned_raw.json
-```
-
-During capture, aim the remote control at Irdroid and press one button once. The receiver uses record mode `m` and stops after the first complete RAW frame by detecting its long lead-out timing. It does not wait for serial inactivity, because a held remote can repeat frames continuously.
-
-Specify the COM port when auto-detection is unavailable or multiple devices are connected:
+## Transmit
 
 ```bash
-python -u irdroid_receive.py COM4
+python -u irdroid_transmit_pronto.py
 ```
 
-Specify another output file:
+With no filename, the transmitter reads `learned_pronto.txt`.
+
+The default transmission count is **3 frames**. This is a general reliability default and is not restricted to one device brand. Some devices accept one frame, while others require repeated frames to recognize the command reliably.
+
+Examples:
 
 ```bash
-python -u irdroid_receive.py COM4 --output command_1.json
+python -u irdroid_transmit_pronto.py command_1.txt
+python -u irdroid_transmit_pronto.py command_1.txt --port COM4
+python -u irdroid_transmit_pronto.py command_1.txt --frames 1
+python -u irdroid_transmit_pronto.py command_1.txt --frames 5
 ```
 
-Linux example:
+## Windows example
 
 ```bash
-python -u irdroid_receive.py /dev/ttyACM0 --output command_1.json
+/c/Python314/python.exe -u irdroid_receive_pronto.py
+/c/Python314/python.exe -u irdroid_transmit_pronto.py
 ```
 
-## Transmit a Saved Signal
-
-By default, the transmitter reads `learned_raw.json`:
+## Linux example
 
 ```bash
-python -u irdroid_transmit.py
+python3 -u irdroid_receive_pronto.py --port /dev/ttyACM0
+python3 -u irdroid_transmit_pronto.py --port /dev/ttyACM0
 ```
 
-Specify a different capture file only when required:
-
-```bash
-python -u irdroid_transmit.py command_1.json
-```
-
-Specify a COM port:
-
-```bash
-python -u irdroid_transmit.py command_1.json --port COM4
-```
-
-By default, three copies of the captured frame are concatenated into one Irdroid transmission. This is required by commands that must be repeated as a frame sequence. Change the number when needed:
-
-```bash
-python -u irdroid_transmit.py command_1.json --frames 3
-```
-
-Repeat the complete transmission transaction separately only when required:
-
-```bash
-python -u irdroid_transmit.py command_1.json --frames 3 --repeat 2
-```
-
-Linux example:
-
-```bash
-python -u irdroid_transmit.py command_1.json --port /dev/ttyACM0
-```
-
-## Capture File Format
-
-The receiver creates a JSON file containing metadata and the exact captured byte stream:
-
-```json
-{
-  "format": "irdroid-raw-v1",
-  "port": "COM4",
-  "firmware": "V225",
-  "captured_at_utc": "2026-10-08T00:00:00+00:00",
-  "byte_count": 100,
-  "raw_hex": "ff ff 00 01 ..."
-}
-```
-
-The transmitter uses the `raw_hex` field. No CSV or Pronto conversion is performed.
+The user may need permission to access the serial device.
 
 ## Notes
 
-- Keep one learned command in each JSON file.
-- Use descriptive file names when saving multiple commands.
-- When several Irdroid devices are connected, specify the serial port explicitly.
-- The scripts validate firmware responses, handshakes, byte counts, and completion notifications.
-
-## License
-
-MIT License
-
-### Capture does not stop
-
-The receiver stops at the first long lead-out timing value after a minimum number of timing words. A verified capture contained a final lead-out near `0x04B3` to `0x04B5`, producing one frame of 52 bytes. Continuous remote repeats after that point are intentionally discarded.
-
-### Transmission completes but the device does not respond
-
-A successful serial transmission only confirms that Irdroid accepted the byte stream. Some commands require the same captured frame several times in one transmission transaction. The default is `--frames 3`. This differs from `--repeat`, which starts separate transmission transactions.
+- The saved format is learned Pronto Hex beginning with `0000`.
+- The receive default carrier frequency is 40000 Hz.
+- `--divisor` overrides `--carrier-hz` during reception.
+- The transmit default is 3 frames.
+- `--frames` overrides the default frame count.
+- If automatic USB PID detection does not find Irdroid, specify `--port` explicitly.
